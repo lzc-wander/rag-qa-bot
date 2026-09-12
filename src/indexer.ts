@@ -1,13 +1,12 @@
 // src/indexer.ts
 import { TextLoader } from "@langchain/classic/document_loaders/fs/text";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { OpenAIEmbeddings } from "@langchain/openai";
 import { Chroma } from "@langchain/community/vectorstores/chroma";
 import { ChromaClient } from "chromadb";
 import { readdirSync, statSync } from "fs";
 import { join, extname } from "path";
 import { Document } from "@langchain/core/documents";
-import { AlibabaTongyiEmbeddings } from "@langchain/community/embeddings/alibaba_tongyi";
+import { AlibabaTongyiEmbeddings, type AlibabaTongyiEmbeddingsParams } from "@langchain/community/embeddings/alibaba_tongyi";
 
 
 interface IndexerOptions {
@@ -57,15 +56,22 @@ export async function buildIndex(options: IndexerOptions): Promise<Chroma> {
   console.log("正在生成向量并存储...");
   
     const embeddings = new AlibabaTongyiEmbeddings({
-    modelName: "text-embedding-v2",
-    apiKey: process.env.ALIBABA_TONGYI_API_KEY,
-    batchSize: 10,
+      // 类型定义的枚举未包含最新模型，运行时直接透传给 API，故用类型断言
+      modelName: "qwen3.7-text-embedding-flash" as AlibabaTongyiEmbeddingsParams["modelName"],
+      apiKey: process.env.ALIBABA_TONGYI_API_KEY,
+      batchSize: 10,
     });
 
+  // 解析 Chroma 连接地址（chromadb v3 弃用了 path，改用 host/port/ssl）
+  const chromaUrl = new URL(process.env.CHROMA_HOST || "http://localhost:8000");
+  const chromaClientParams = {
+    host: chromaUrl.hostname,
+    port: parseInt(chromaUrl.port, 10) || (chromaUrl.protocol === "https:" ? 443 : 80),
+    ssl: chromaUrl.protocol === "https:",
+  };
+
   // 连接 Chroma 客户端
-  const client = new ChromaClient({ 
-    path: process.env.CHROMA_HOST || "http://localhost:8000" 
-  });
+  const client = new ChromaClient(chromaClientParams);
   
   // 删除旧的 Collection（如果存在）
   try {
@@ -75,13 +81,13 @@ export async function buildIndex(options: IndexerOptions): Promise<Chroma> {
     // Collection 不存在，忽略
   }
 
-  // 批量存入向量数据库
+  // 批量存入向量数据库（复用已创建的 client）
   const vectorStore = await Chroma.fromDocuments(
     allChunks,
     embeddings,
     {
       collectionName,
-      url: process.env.CHROMA_HOST || "http://localhost:8000",
+      index: client,
     }
   );
 

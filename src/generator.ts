@@ -22,6 +22,10 @@ export class RAGGenerator {
 
   constructor(config: GeneratorConfig = {}) {
     this.llm = new ChatOpenAI({
+    apiKey: process.env.DEEPSEEK_API_KEY, 
+    configuration: {
+      baseURL: process.env.DEEPSEEK_API_URL,
+    },
       modelName: config.modelName || "gpt-4o",
       temperature: config.temperature ?? 0,  // 降低随机性
     });

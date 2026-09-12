@@ -83,7 +83,8 @@ export function startCLI(
         
         console.log(`\n📊 对话历史长度: ${generator.getHistoryLength()} 条消息\n`);
       } catch (error) {
-        console.error(`\n❌ 处理失败: ${error.message}\n`);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`\n❌ 处理失败: ${message}\n`);
       }
 
       ask();
