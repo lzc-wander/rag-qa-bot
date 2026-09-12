@@ -16,6 +16,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@langchain/classic": "^1.0.48",
     "@langchain/community": "^1.1.29",
     "@langchain/core": "^1.2.11",
     "@langchain/openai": "^1.5.13",
