@@ -3,6 +3,7 @@ import express, { Request, Response } from "express";
 import { RAGGenerator } from "./generator";
 import { VectorStoreRetriever } from "@langchain/core/vectorstores";
 import { logQuery, getQueryStats } from "./logger";
+import { QueryCache } from "./cache";
 
 interface ChatRequest {
   query: string;
@@ -19,13 +20,16 @@ interface ChatResponse {
   metadata: {
     retrieveTime: number;
     generateTime: number;
+    totalTime: number;
     historyLength: number;
+    fromCache: boolean;
   };
 }
 
 export function startServer(
   generator: RAGGenerator,
-  retriever: VectorStoreRetriever
+  retriever: VectorStoreRetriever,
+  cache: QueryCache
 ): void {
   const app = express();
   app.use(express.json());
@@ -57,6 +61,34 @@ export function startServer(
     let docCount = 0;
 
     try {
+      // 先查缓存
+      const cached = cache.get(query);
+      if (cached) {
+        const totalTime = Date.now() - startTime;
+
+        logQuery(query, {
+          docCount: cached.sources.length,
+          retrieveTime: 0,
+          generateTime: 0,
+          totalTime,
+          success: true,
+        });
+
+        const response: ChatResponse = {
+          answer: cached.answer,
+          sources: cached.sources,
+          metadata: {
+            retrieveTime: 0,
+            generateTime: 0,
+            totalTime,
+            historyLength: generator.getHistoryLength(),
+            fromCache: true,
+          },
+        };
+
+        return res.json(response);
+      }
+
       // 检索
       const retrieveStart = Date.now();
       const docs = await retriever.invoke(query);
@@ -69,6 +101,16 @@ export function startServer(
       generateTime = Date.now() - generateStart;
 
       const totalTime = Date.now() - startTime;
+
+      // 写入缓存
+      cache.set(
+        query,
+        answer,
+        docs.map((doc) => ({
+          source: doc.metadata.source || "未知来源",
+          content: doc.pageContent.slice(0, 200),
+        }))
+      );
 
       // 记录成功日志
       logQuery(query, {
@@ -89,7 +131,9 @@ export function startServer(
         metadata: {
           retrieveTime,
           generateTime,
+          totalTime,
           historyLength: generator.getHistoryLength(),
+          fromCache: false,
         },
       };
 
@@ -116,11 +160,12 @@ export function startServer(
   });
 
   /**
-   * POST /clear - 清空对话历史
+   * POST /clear - 清空对话历史和缓存
    */
   app.post("/clear", (req: Request, res: Response) => {
     generator.clearHistory();
-    res.json({ message: "对话历史已清空" });
+    cache.clear();
+    res.json({ message: "对话历史和缓存已清空" });
   });
 
   /**
@@ -134,13 +179,15 @@ export function startServer(
   });
 
   /**
-   * GET /stats - 统计信息（含查询日志统计）
+   * GET /stats - 统计信息（含查询日志统计和缓存统计）
    */
   app.get("/stats", (_req: Request, res: Response) => {
     const queryStats = getQueryStats();
+    const cacheStats = cache.getStats();
     res.json({
       historyLength: generator.getHistoryLength(),
       queryStats,
+      cacheStats,
     });
   });
 
