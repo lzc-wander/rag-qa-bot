@@ -2,6 +2,7 @@
 import express, { Request, Response } from "express";
 import { RAGGenerator } from "./generator";
 import { VectorStoreRetriever } from "@langchain/core/vectorstores";
+import { logQuery, getQueryStats } from "./logger";
 
 interface ChatRequest {
   query: string;
@@ -50,20 +51,33 @@ export function startServer(
       });
     }
 
-    try {
-      const startTime = Date.now();
+    const startTime = Date.now();
+    let retrieveTime = 0;
+    let generateTime = 0;
+    let docCount = 0;
 
+    try {
       // 检索
       const retrieveStart = Date.now();
       const docs = await retriever.invoke(query);
-      const retrieveTime = Date.now() - retrieveStart;
+      retrieveTime = Date.now() - retrieveStart;
+      docCount = docs.length;
 
       // 生成
       const generateStart = Date.now();
       const answer = await generator.generate(query, docs);
-      const generateTime = Date.now() - generateStart;
+      generateTime = Date.now() - generateStart;
 
       const totalTime = Date.now() - startTime;
+
+      // 记录成功日志
+      logQuery(query, {
+        docCount,
+        retrieveTime,
+        generateTime,
+        totalTime,
+        success: true,
+      });
 
       // 组装响应
       const response: ChatResponse = {
@@ -81,10 +95,22 @@ export function startServer(
 
       res.json(response);
     } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
       console.error("API 错误:", error);
+
+      // 记录失败日志
+      logQuery(query, {
+        docCount,
+        retrieveTime,
+        generateTime,
+        totalTime: Date.now() - startTime,
+        success: false,
+        error: message,
+      });
+
       res.status(500).json({
         error: "服务器内部错误",
-        message: error instanceof Error ? error.message : "未知错误",
+        message,
       });
     }
   });
@@ -108,11 +134,13 @@ export function startServer(
   });
 
   /**
-   * GET /stats - 统计信息
+   * GET /stats - 统计信息（含查询日志统计）
    */
   app.get("/stats", (_req: Request, res: Response) => {
+    const queryStats = getQueryStats();
     res.json({
       historyLength: generator.getHistoryLength(),
+      queryStats,
     });
   });
 
